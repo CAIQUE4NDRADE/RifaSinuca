@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Rifa da Mesa de Sinuca</title>
-<meta name="description" content="1000 números a R$ 5 cada. Sorteio pela Loteria Federal. Escolha seus números e pague no Pix.">
+<meta name="description" content="Concorra a uma mesa de sinuca ou R$ 2.000 no Pix. 1000 números a R$ 5 cada, sorteio pela Loteria Federal.">
 
 <!-- Prévia no WhatsApp / redes sociais -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Rifa da Mesa de Sinuca">
 <meta property="og:title" content="Rifa da Mesa de Sinuca · R$ 5 o número">
-<meta property="og:description" content="1000 números a R$ 5 cada. Sorteio pela Loteria Federal. Escolha os seus e pague no Pix.">
+<meta property="og:description" content="Mesa de sinuca ou R$ 2.000 no Pix, você escolhe. 1000 números a R$ 5 cada, sorteio pela Loteria Federal.">
 <meta property="og:url" content="https://caique4ndrade.github.io/RifaSinuca/">
 <meta property="og:image" content="https://caique4ndrade.github.io/RifaSinuca/og.jpg">
 <meta property="og:image:width" content="1200">
@@ -37,14 +37,16 @@
 const MAX_POR_RESERVA = 50;
 const SITE = 'https://caique4ndrade.github.io/RifaSinuca/';
 const app = document.getElementById('app');
+let ranking = [];
 let C = null, ocupados = new Map(), sel = new Set(), faixa = 0;
 let regrasAbertas = false;
 let nome = '', fone = '', busca = '', erro = '', dica = '', reservado = null, reservadoEm = null, enviando = false;
 
 async function carregar() {
-  const [c, n] = await Promise.all([
+  const [c, n, r] = await Promise.all([
     sb.from('rifa_config').select('*').eq('id', 1).single(),
-    sb.rpc('rifa_status')
+    sb.rpc('rifa_status'),
+    sb.rpc('rifa_ranking', { p_limite: 5 })
   ]);
   if (c.error || n.error) {
     app.replaceChildren(h('p', { class: 'loading' }, 'Não foi possível carregar a rifa. Verifique sua internet e atualize a página.'));
@@ -52,6 +54,7 @@ async function carregar() {
   }
   C = c.data;
   ocupados = new Map(n.data.map(x => [x.numero, x.status]));
+  ranking = (r && !r.error && r.data) || []; // sem a função no banco, só não mostra
   ocupados.forEach((_, k) => sel.delete(k)); // alguém pegou antes
   render();
 }
@@ -150,8 +153,22 @@ function blocoCompraRapida(fechado) {
       h('button', { onclick: () => compraRapida(q) }, h('b', null, '+' + q), h('span', null, brl(q * C.preco))))));
 }
 
+function blocoRanking() {
+  if (!ranking.length) return null;
+  const medalhas = ['#d4a72c', '#a7adb4', '#b8733d'];
+  return h('section', { class: 'panel' },
+    h('h2', null, 'Maiores compradores'),
+    h('ol', { class: 'rank' }, ranking.map((p, i) =>
+      h('li', null,
+        h('span', { class: 'rank-pos', style: i < 3 ? 'background:' + medalhas[i] + ';color:#17191d' : '' }, i + 1),
+        h('span', { class: 'rank-ini', 'aria-hidden': 'true' }, (p.nome || '?')[0]),
+        h('span', { class: 'rank-nome' }, p.nome),
+        h('span', { class: 'rank-qtd' }, p.qtd + (p.qtd > 1 ? ' números' : ' número'))))),
+    h('p', { class: 'muted' }, 'Conta só números pagos.'));
+}
+
 function blocoCompartilhar() {
-  const texto = 'Rifa da ' + C.premio.toLowerCase() + ' por ' + brl(C.preco) + ' o número! Sorteio pela Loteria Federal. Escolha os seus: ' + SITE;
+  const texto = 'Rifa: ' + C.premio.toLowerCase() + ' ou R$ 2.000 no Pix, por ' + brl(C.preco) + ' o número! Sorteio pela Loteria Federal. Escolha os seus: ' + SITE;
   return h('section', { class: 'panel' },
     h('h2', null, 'Compartilhe com os amigos'),
     h('div', { class: 'row' },
@@ -165,7 +182,11 @@ function blocoRegulamento() {
     h('summary', null, 'Regulamento'),
     h('div', null,
       h('h3', null, 'Prêmio'),
-      h('p', null, 'Uma ' + C.premio.toLowerCase() + ' conforme as fotos desta página' + (C.descricao ? ': ' + C.descricao : '') + '.'),
+      h('p', null, 'O ganhador escolhe entre:'),
+      h('ul', null,
+        h('li', null, 'uma ' + C.premio.toLowerCase() + ' conforme as fotos desta página' + (C.descricao ? ' (' + C.descricao + ')' : '') + '; ou'),
+        h('li', null, 'R$ 2.000,00 (dois mil reais) em dinheiro, pagos via Pix na conta do ganhador.')),
+      h('p', null, 'A escolha é informada ao organizador pelo WhatsApp em até 7 dias depois do resultado.'),
       h('h3', null, 'Números e valor'),
       h('p', null, 'São ' + C.total + ' números, de ' + pad(PRIMEIRO) + ' a ' + pad(ultimo(C.total)) + ', a ' + brl(C.preco) + ' cada. Cada número pertence a uma única pessoa.'),
       h('h3', null, 'Como participar'),
@@ -266,6 +287,7 @@ function render() {
     h('header', { class: 'felt' }, h('div', { class: 'wrap' },
       h('span', { class: 'eyebrow' }, 'Rifa · ' + C.total + ' números · ' + brl(C.preco) + ' cada'),
       h('h1', null, C.premio),
+      h('p', { class: 'ou-dinheiro' }, 'ou ', h('strong', null, 'R$ 2.000 no Pix'), ' · o ganhador escolhe'),
       blocoSorteio(livres),
       h('div', { class: 'progress' },
         h('div', { class: 'bar', role: 'progressbar', 'aria-label': 'Números vendidos', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('i', { style: 'width:' + pct + '%' })),
@@ -288,6 +310,7 @@ function render() {
         h('span', null, h('i', { class: 'dot', style: 'background:var(--ok)' }), 'Pago')),
       h('div', { class: 'grid' }, bolas),
       painel(),
+      blocoRanking(),
       blocoCompartilhar(),
       blocoRegulamento())),
     h('footer', null, h('div', { class: 'wrap' }, 'Rifa entre amigos · a página atualiza sozinha a cada 30 segundos'))

@@ -31,6 +31,7 @@
 <div id="app"><p class="loading">Carregando a rifa…</p></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 <script src="config.js"></script>
 <script>
 const MAX_POR_RESERVA = 50;
@@ -188,17 +189,20 @@ function painel() {
     const prazo = C.prazo_horas || 24;
     const limite = new Date(reservadoEm.getTime() + prazo * 3600 * 1000);
     const link = waLink(C.whatsapp, mensagem(reservado));
-    const qr = h('img', { src: 'pix-qrcode.png', alt: 'QR Code do Pix', width: 220, height: 220 });
-    qr.addEventListener('error', () => qr.parentElement?.remove());
+    const total = reservado.length * C.preco;
+    const copiaCola = C.pix ? pixPayload({ chave: C.pix, valor: total, txid: 'RIFA' + pad(reservado[0]) + reservado.length }) : null;
+    const qrImg = copiaCola ? qrSvg(copiaCola) : null;
     return h('section', { class: 'panel', id: 'painel' },
       h('h2', null, 'Números reservados!'),
       h('div', { class: 'chips' }, reservado.map(n => h('span', { class: 'chip' }, pad(n)))),
       h('p', { style: 'margin:0;font-weight:700;font-size:18px' }, 'Total: ' + brl(reservado.length * C.preco)),
       h('p', { class: 'prazo' }, 'Pague até ' + limite.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) +
         ' (' + prazo + ' horas). Depois disso a reserva é cancelada e os números voltam a ficar livres.'),
-      h('div', { class: 'qr' }, h('p', { class: 'muted', style: 'font-weight:700' }, 'Pague com o QR Code'), qr),
+      qrImg ? h('div', { class: 'qr' },
+        h('p', { class: 'muted', style: 'font-weight:700' }, 'Pague com o QR Code (já vem com o valor de ' + brl(total) + ')'), qrImg,
+        h('button', { class: 'btn primary', onclick: e => copiar(copiaCola, e.currentTarget) }, 'Copiar Pix copia e cola')) : null,
       C.pix ? h('div', { style: 'display:grid;gap:6px' },
-        h('p', { class: 'muted', style: 'font-weight:700' }, 'Ou copie a chave Pix'),
+        h('p', { class: 'muted', style: 'font-weight:700' }, 'Ou pague pela chave Pix (e-mail)'),
         h('div', { class: 'row' }, h('span', { class: 'pix' }, C.pix),
           h('button', { class: 'btn sm', onclick: e => copiar(C.pix, e.currentTarget) }, 'Copiar chave'))) : null,
       h('div', { class: 'row' },

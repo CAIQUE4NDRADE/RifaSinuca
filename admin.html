@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Rifa · Organizador</title>
 <meta name="robots" content="noindex">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=Figtree:wght@400;600;700&display=swap">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="icon" href="favicon.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="theme-color" content="#1d6b45">
+<meta name="theme-color" content="#17191d">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=Figtree:wght@400;600;700&display=swap">
 <link rel="stylesheet" href="estilo.css">
 </head>
 <body>
@@ -21,10 +21,12 @@
 <script>
 const app = document.getElementById('app');
 let C = null, ocupados = new Map(), editando = null, faixa = 0, busca = '', filtro = 'reservado', procura = '';
+let lfConcurso = '', lfPremio = '';
 let aviso = '', avisoErro = false;
 
 function setAviso(t, err) { aviso = t; avisoErro = !!err; render(); if (!err) setTimeout(() => { if (aviso === t) { aviso = ''; render(); } }, 3000); }
 const linha = n => ocupados.get(n) || { numero: n, status: 'livre', nome: '', telefone: '' };
+const fmtHora = d => d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 // ---------- LOGIN ----------
 function telaLogin(msg) {
@@ -47,6 +49,7 @@ function telaLogin(msg) {
 
 // ---------- DADOS ----------
 async function carregar() {
+  await sb.rpc('rifa_liberar_vencidas'); // solta reservas vencidas antes de listar
   const [c, n] = await Promise.all([
     sb.from('rifa_config').select('*').eq('id', 1).single(),
     sb.from('rifa_numeros').select('*').neq('status', 'livre').order('numero').range(0, 4999)
@@ -67,9 +70,11 @@ async function iniciar() {
 }
 
 async function salvarNumeros(numeros, status, nome, telefone) {
+  const agora = new Date().toISOString();
   const dados = status === 'livre'
-    ? { status, nome: null, telefone: null, atualizado_em: new Date().toISOString() }
-    : { status, nome: (nome || '').trim() || null, telefone: (telefone || '').trim() || null, atualizado_em: new Date().toISOString() };
+    ? { status, nome: null, telefone: null, reservado_em: null, atualizado_em: agora }
+    : { status, nome: (nome || '').trim() || null, telefone: (telefone || '').trim() || null, atualizado_em: agora };
+  if (status === 'reservado') dados.reservado_em = agora; // prazo recomeça
   const { error } = await sb.from('rifa_numeros').update(dados).in('numero', numeros);
   if (error) return setAviso(erroMsg(error), true);
   editando = null; await carregar();
@@ -78,44 +83,59 @@ async function salvarNumeros(numeros, status, nome, telefone) {
 
 async function salvarConfig(form) {
   const f = Object.fromEntries(new FormData(form));
+  const prazo = Math.max(1, Math.min(168, parseInt(f.prazo_horas, 10) || 24));
   const { error } = await sb.from('rifa_config').update({
     premio: f.premio.trim() || 'Mesa de sinuca', descricao: f.descricao.trim(),
-    data_sorteio: f.data_sorteio || null, whatsapp: f.whatsapp.trim(), pix: f.pix.trim()
+    data_sorteio: f.data_sorteio || null, whatsapp: f.whatsapp.trim(), pix: f.pix.trim(), prazo_horas: prazo
   }).eq('id', 1);
   if (error) return setAviso(erroMsg(error), true);
   await carregar(); setAviso('Dados da rifa salvos.');
 }
 
-async function sortear() {
-  const pagos = [...ocupados.values()].filter(x => x.status === 'pago').map(x => x.numero);
-  if (!pagos.length) return;
-  const r = new Uint32Array(1); crypto.getRandomValues(r);
-  const n = pagos[r[0] % pagos.length];
-  const { error } = await sb.from('rifa_config').update({ resultado_numero: n, resultado_em: new Date().toISOString() }).eq('id', 1);
+function numeroDoPremio(premio) {
+  const d = String(premio).replace(/\D/g, '');
+  return d.length >= 3 ? parseInt(d.slice(-3), 10) : null;
+}
+
+async function lancarResultado(btn) {
+  const n = numeroDoPremio(lfPremio);
+  if (n == null) return setAviso('Digite o número do 1º prêmio da Loteria Federal (5 dígitos).', true);
+  if (btn.dataset.confirma !== '1') { btn.dataset.confirma = '1'; btn.textContent = 'Confirmar: ganhador nº ' + pad(n); return; }
+  const { error } = await sb.from('rifa_config').update({
+    resultado_numero: n, resultado_em: new Date().toISOString(),
+    loteria_concurso: lfConcurso.trim() || null, loteria_premio: lfPremio.trim()
+  }).eq('id', 1);
   if (error) return setAviso(erroMsg(error), true);
   await carregar();
 }
 
 async function desfazerSorteio(btn) {
   if (btn.dataset.confirma !== '1') { btn.dataset.confirma = '1'; btn.textContent = 'Toque de novo para confirmar'; return; }
-  const { error } = await sb.from('rifa_config').update({ resultado_numero: null, resultado_em: null }).eq('id', 1);
+  const { error } = await sb.from('rifa_config').update({ resultado_numero: null, resultado_em: null, loteria_concurso: null, loteria_premio: null }).eq('id', 1);
   if (error) return setAviso(erroMsg(error), true);
   await carregar();
 }
 
 function abrir(n) {
-  editando = n; faixa = Math.floor((n - 1) / POR_FAIXA); render();
+  editando = n; faixa = faixaDe(n); render();
   document.getElementById('editar')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function abrirBusca() {
+  const n = parseInt(busca, 10);
+  if (!isNaN(n) && n >= PRIMEIRO && n <= ultimo(C.total)) abrir(n);
 }
 
 // ---------- TELA ----------
 function painelNumero() {
-  if (!editando) return null;
+  if (editando == null) return null;
   const it = linha(editando);
   let nome = it.nome || '', tel = it.telefone || '';
   const zap = waLink(it.telefone, 'Olá, ' + ((it.nome || '').split(' ')[0]) + '! Sobre o número ' + pad(editando) + ' da rifa da ' + C.premio.toLowerCase() + ':');
+  const expira = it.status === 'reservado' && it.reservado_em ? new Date(new Date(it.reservado_em).getTime() + C.prazo_horas * 3600e3) : null;
   return h('section', { class: 'panel', id: 'editar' },
     h('h2', null, 'Número ' + pad(editando) + ' · ' + it.status),
+    expira ? h('p', { class: 'prazo' }, 'Reserva expira em ' + fmtHora(expira) + '. Se marcar como "Reservado" de novo, o prazo recomeça.') : null,
     h('div', { class: 'two' },
       h('label', null, 'Comprador', h('input', { id: 'ed-nome', value: nome, oninput: e => (nome = e.target.value) })),
       h('label', null, 'WhatsApp', h('input', { id: 'ed-tel', type: 'tel', value: tel, oninput: e => (tel = e.target.value) }))),
@@ -133,13 +153,49 @@ function compradores() {
   ocupados.forEach(x => {
     if (filtro !== 'todos' && x.status !== filtro) return;
     const chave = (x.nome || '').toLowerCase() + '|' + (x.telefone || '').replace(/\D/g, '');
-    if (!grupos.has(chave)) grupos.set(chave, { nome: x.nome, telefone: x.telefone, nums: [], status: new Set() });
-    const g = grupos.get(chave); g.nums.push(x.numero); g.status.add(x.status);
+    if (!grupos.has(chave)) grupos.set(chave, { nome: x.nome, telefone: x.telefone, nums: [], expira: null });
+    const g = grupos.get(chave); g.nums.push(x.numero);
+    if (x.status === 'reservado' && x.reservado_em) {
+      const e = new Date(new Date(x.reservado_em).getTime() + C.prazo_horas * 3600e3);
+      if (!g.expira || e < g.expira) g.expira = e;
+    }
   });
   let lista = [...grupos.values()];
   const q = procura.trim().toLowerCase();
   if (q) lista = lista.filter(g => (g.nome || '').toLowerCase().includes(q) || (g.telefone || '').includes(q) || g.nums.some(n => pad(n).includes(q)));
-  return lista.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+  return lista.sort((a, b) => (a.expira || Infinity) - (b.expira || Infinity) || (a.nome || '').localeCompare(b.nome || ''));
+}
+
+function blocoSorteio(pagos) {
+  if (C.resultado_numero != null) {
+    const g = linha(C.resultado_numero);
+    const zap = waLink(g.telefone, 'Olá, ' + ((g.nome || '').split(' ')[0]) + '! Seu número ' + pad(C.resultado_numero) + ' foi o sorteado na rifa da ' + C.premio.toLowerCase() + '! 🎉');
+    return h('section', { class: 'panel' },
+      h('h2', null, 'Resultado'),
+      h('p', { style: 'margin:0;font-weight:700;font-size:18px' }, 'Ganhador: nº ' + pad(C.resultado_numero) + ' · ' + (g.nome || 'número não vendido') + (g.telefone ? ' · ' + g.telefone : '')),
+      h('p', { class: 'muted' }, 'Loteria Federal' + (C.loteria_concurso ? ', concurso ' + C.loteria_concurso : '') + ' · 1º prêmio ' + (C.loteria_premio || '')),
+      h('div', { class: 'row' },
+        zap ? h('a', { class: 'btn primary', href: zap, target: '_blank', rel: 'noopener' }, 'Avisar o ganhador') : null,
+        h('button', { class: 'btn', onclick: e => desfazerSorteio(e.currentTarget) }, 'Desfazer resultado')));
+  }
+  const n = numeroDoPremio(lfPremio);
+  const faltam = C.total - pagos;
+  return h('section', { class: 'panel' },
+    h('h2', null, 'Resultado da Loteria Federal'),
+    h('p', { class: 'muted' }, 'Depois da extração, digite o 1º prêmio. O ganhador é o número igual aos 3 últimos dígitos. Confira em loterias.caixa.gov.br.'),
+    faltam > 0 ? h('p', { class: 'prazo' }, 'Ainda faltam ' + faltam + ' números pagos. Pelo regulamento, o sorteio só acontece depois que todos forem vendidos.') : null,
+    h('div', { class: 'two' },
+      h('label', null, 'Concurso', h('input', { id: 'lf-conc', inputmode: 'numeric', value: lfConcurso, placeholder: 'Ex.: 6115', oninput: e => (lfConcurso = e.target.value) })),
+      h('label', null, '1º prêmio', h('input', { id: 'lf-premio', inputmode: 'numeric', value: lfPremio, placeholder: 'Ex.: 54327', oninput: e => { lfPremio = e.target.value; const p = document.getElementById('lf-prev'); if (p) p.textContent = prever(); } }))),
+    h('p', { id: 'lf-prev', style: 'margin:0;font-weight:700' }, prever()),
+    h('div', { class: 'row' }, h('button', { class: 'btn gold', onclick: e => lancarResultado(e.currentTarget) }, 'Lançar resultado')));
+}
+
+function prever() {
+  const n = numeroDoPremio(lfPremio);
+  if (n == null) return '';
+  const g = linha(n);
+  return 'Ganhador: nº ' + pad(n) + ' · ' + (g.status === 'livre' ? 'número livre (não vendido)' : (g.nome || 'sem nome') + ' (' + g.status + ')');
 }
 
 function render() {
@@ -147,7 +203,7 @@ function render() {
   const pagos = todos.filter(x => x.status === 'pago');
   const res = todos.filter(x => x.status === 'reservado');
 
-  const ini = faixa * POR_FAIXA + 1, fim = Math.min(ini + POR_FAIXA - 1, C.total);
+  const ini = PRIMEIRO + faixa * POR_FAIXA, fim = Math.min(ini + POR_FAIXA - 1, ultimo(C.total));
   const bolas = [];
   for (let n = ini; n <= fim; n++) {
     const st = linha(n).status;
@@ -179,17 +235,19 @@ function render() {
           h('h2', null, 'Compradores'),
           h('div', { class: 'row' }, ['reservado', 'pago', 'todos'].map(f =>
             h('button', { class: 'btn sm' + (filtro === f ? ' on' : ''), onclick: () => { filtro = f; render(); } }, f[0].toUpperCase() + f.slice(1))))),
+        h('p', { class: 'muted' }, 'Reservas não pagas em ' + C.prazo_horas + ' horas são liberadas sozinhas.'),
         h('input', { id: 'procura', value: procura, placeholder: 'Procurar por nome, telefone ou número', oninput: e => { procura = e.target.value; render(); } }),
         lista.length ? h('div', { class: 'tw' }, h('table', null,
-          h('thead', null, h('tr', null, h('th', null, 'Nome'), h('th', null, 'WhatsApp'), h('th', null, 'Números'), h('th', null, 'Valor'), h('th', null, ''))),
+          h('thead', null, h('tr', null, h('th', null, 'Nome'), h('th', null, 'WhatsApp'), h('th', null, 'Números'), h('th', null, 'Valor'), h('th', null, 'Expira'), h('th', null, ''))),
           h('tbody', null, lista.map(g => {
             const pend = g.nums.filter(n => linha(n).status === 'reservado');
             return h('tr', null,
               h('td', null, g.nome || '—'),
               h('td', null, g.telefone || '—'),
               h('td', null, h('div', { class: 'chips' }, g.nums.sort((a, b) => a - b).map(n =>
-                h('button', { class: 'chip', style: 'border:0;cursor:pointer;font:inherit;font-weight:700;font-size:12px;' + (linha(n).status === 'reservado' ? 'background:var(--warn)' : ''), onclick: () => abrir(n) }, pad(n))))),
+                h('button', { class: 'chip', style: 'border:0;cursor:pointer;font:inherit;font-weight:700;font-size:12px;' + (linha(n).status === 'reservado' ? 'background:var(--warn)' : 'background:var(--ok)'), onclick: () => abrir(n) }, pad(n))))),
               h('td', null, brl(g.nums.length * C.preco)),
+              h('td', null, g.expira ? fmtHora(g.expira) : '—'),
               h('td', null, pend.length ? h('button', { class: 'btn sm primary', onclick: () => salvarNumeros(pend, 'pago', g.nome, g.telefone) }, 'Pagou tudo (' + brl(pend.length * C.preco) + ')') : null));
           }))))
           : h('p', { class: 'muted' }, procura ? 'Ninguém encontrado.' : 'Nenhum número ' + (filtro === 'todos' ? 'vendido' : filtro) + ' ainda.')),
@@ -197,35 +255,32 @@ function render() {
       h('section', { class: 'panel' },
         h('h2', null, 'Números'),
         h('div', { class: 'tools' },
-          h('label', null, 'Ir para o número', h('input', { id: 'busca', type: 'number', inputmode: 'numeric', min: 1, max: C.total, value: busca,
-            oninput: e => (busca = e.target.value), onkeydown: e => { if (e.key === 'Enter') { const n = parseInt(busca, 10); if (n >= 1 && n <= C.total) abrir(n); } } })),
-          h('button', { class: 'btn', onclick: () => { const n = parseInt(busca, 10); if (n >= 1 && n <= C.total) abrir(n); } }, 'Abrir')),
+          h('label', null, 'Ir para o número', h('input', { id: 'busca', type: 'number', inputmode: 'numeric', min: PRIMEIRO, max: ultimo(C.total), value: busca,
+            oninput: e => (busca = e.target.value), onkeydown: e => { if (e.key === 'Enter') abrirBusca(); } })),
+          h('button', { class: 'btn', onclick: abrirBusca }, 'Abrir')),
         barraFaixas(C.total, faixa, ocupados, i => { faixa = i; render(); }),
         h('div', { class: 'grid' }, bolas)),
       painelNumero(),
+
+      blocoSorteio(pagos.length),
 
       h('form', { class: 'panel', onsubmit: e => { e.preventDefault(); salvarConfig(e.target); } },
         h('h2', null, 'Dados da rifa'),
         h('div', { class: 'two' },
           h('label', null, 'Prêmio', h('input', { id: 'cfg-premio', name: 'premio', value: C.premio || '' })),
-          h('label', null, 'Data do sorteio', h('input', { id: 'cfg-data', name: 'data_sorteio', type: 'date', value: C.data_sorteio || '' }))),
-        h('label', null, 'Descrição', h('input', { id: 'cfg-desc', name: 'descricao', value: C.descricao || '', placeholder: 'Ex.: mesa 2,20 m com tacos, bolas e giz' })),
+          h('label', null, 'Prazo para pagar (horas)', h('input', { id: 'cfg-prazo', name: 'prazo_horas', type: 'number', min: 1, max: 168, value: C.prazo_horas || 24 }))),
+        h('label', null, 'Descrição (aparece embaixo da foto)', h('input', { id: 'cfg-desc', name: 'descricao', value: C.descricao || '', placeholder: 'Ex.: mesa preta com tecido preto e tabelas vermelhas' })),
+        h('label', null, 'Data da extração da Loteria Federal (preencha quando vender tudo)',
+          h('input', { id: 'cfg-data', name: 'data_sorteio', type: 'date', value: C.data_sorteio || '' })),
+        h('p', { class: 'muted' }, 'A Loteria Federal sorteia às quartas e sábados, 19h. Com a data preenchida, a página mostra a contagem regressiva.'),
         h('div', { class: 'two' },
           h('label', null, 'Seu WhatsApp (com DDD)', h('input', { id: 'cfg-wa', name: 'whatsapp', type: 'tel', value: C.whatsapp || '', placeholder: '(19) 99999-9999' })),
           h('label', null, 'Chave Pix', h('input', { id: 'cfg-pix', name: 'pix', value: C.pix || '', placeholder: 'CPF, e-mail, telefone ou aleatória' }))),
-        h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, 'Salvar dados'))),
-
-      h('section', { class: 'panel' },
-        h('h2', null, 'Sorteio'),
-        C.resultado_numero
-          ? [h('p', { style: 'margin:0;font-weight:700' }, 'Sorteado: nº ' + pad(C.resultado_numero) + ' · ' + (linha(C.resultado_numero).nome || '') + ' ' + (linha(C.resultado_numero).telefone || '')),
-             h('div', { class: 'row' }, h('button', { class: 'btn', onclick: e => desfazerSorteio(e.currentTarget) }, 'Desfazer sorteio'))]
-          : [h('p', { class: 'muted' }, 'Sorteia um número entre os ' + pagos.length + ' pagos e mostra o resultado na página pública. Números só reservados não entram.'),
-             h('div', { class: 'row' }, h('button', { class: 'btn gold', disabled: !pagos.length, onclick: sortear }, 'Sortear agora'))])
+        h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, 'Salvar dados')))
     ))
   );
   if (ativo === 'procura') { const el = document.getElementById('procura'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-  if (ativo === 'busca') document.getElementById('busca')?.focus();
+  if (ativo && ['busca', 'lf-conc', 'lf-premio'].includes(ativo)) document.getElementById(ativo)?.focus();
 }
 
 iniciar();

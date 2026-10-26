@@ -4,13 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Rifa da Mesa de Sinuca</title>
-<meta name="description" content="Escolha seus números da rifa da mesa de sinuca.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=Figtree:wght@400;600;700&display=swap">
+<meta name="description" content="1000 números a R$ 5 cada. Sorteio pela Loteria Federal. Escolha seus números e pague no Pix.">
+
+<!-- Prévia no WhatsApp / redes sociais -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Rifa da Mesa de Sinuca">
+<meta property="og:title" content="Rifa da Mesa de Sinuca · R$ 5 o número">
+<meta property="og:description" content="1000 números a R$ 5 cada. Sorteio pela Loteria Federal. Escolha os seus e pague no Pix.">
+<meta property="og:url" content="https://caique4ndrade.github.io/RifaSinuca/">
+<meta property="og:image" content="https://caique4ndrade.github.io/RifaSinuca/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:locale" content="pt_BR">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://caique4ndrade.github.io/RifaSinuca/og.jpg">
+
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="icon" href="favicon.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="theme-color" content="#1d6b45">
+<meta name="theme-color" content="#17191d">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=Figtree:wght@400;600;700&display=swap">
 <link rel="stylesheet" href="estilo.css">
 </head>
 <body>
@@ -20,9 +34,10 @@
 <script src="config.js"></script>
 <script>
 const MAX_POR_RESERVA = 50;
+const SITE = 'https://caique4ndrade.github.io/RifaSinuca/';
 const app = document.getElementById('app');
 let C = null, ocupados = new Map(), sel = new Set(), faixa = 0;
-let nome = '', fone = '', busca = '', erro = '', dica = '', reservado = null, enviando = false;
+let nome = '', fone = '', busca = '', erro = '', dica = '', reservado = null, reservadoEm = null, enviando = false;
 
 async function carregar() {
   const [c, n] = await Promise.all([
@@ -40,32 +55,44 @@ async function carregar() {
 }
 
 const status = n => ocupados.get(n) || 'livre';
-const faixaDe = n => Math.floor((n - 1) / POR_FAIXA);
 
 function escolher(n) {
-  if (sel.has(n)) { sel.delete(n); return; }
-  if (sel.size >= MAX_POR_RESERVA) { dica = 'Máximo de ' + MAX_POR_RESERVA + ' números por reserva.'; return; }
-  sel.add(n);
+  if (sel.has(n)) { sel.delete(n); return true; }
+  if (sel.size >= MAX_POR_RESERVA) { dica = 'Máximo de ' + MAX_POR_RESERVA + ' números por reserva.'; return false; }
+  sel.add(n); return true;
+}
+
+function livresDisponiveis() {
+  const l = [];
+  for (let n = PRIMEIRO; n <= ultimo(C.total); n++) if (status(n) === 'livre' && !sel.has(n)) l.push(n);
+  return l;
+}
+
+function compraRapida(qtd) {
+  dica = '';
+  const livres = livresDisponiveis();
+  const cabe = Math.min(qtd, MAX_POR_RESERVA - sel.size, livres.length);
+  if (cabe <= 0) { dica = livres.length ? 'Máximo de ' + MAX_POR_RESERVA + ' números por reserva.' : 'Não há mais números livres.'; return render(); }
+  const r = new Uint32Array(cabe); crypto.getRandomValues(r);
+  let ultimoEscolhido = null;
+  for (let i = 0; i < cabe; i++) {
+    const j = r[i] % livres.length;
+    ultimoEscolhido = livres[j]; sel.add(livres[j]);
+    livres.splice(j, 1);
+  }
+  if (cabe < qtd) dica = 'Foram adicionados ' + cabe + ' números (limite de ' + MAX_POR_RESERVA + ' por reserva).';
+  faixa = faixaDe(ultimoEscolhido); reservado = null; render();
+  document.getElementById('painel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function irPara() {
   const n = parseInt(busca, 10);
   dica = '';
-  if (!n || n < 1 || n > C.total) { dica = 'Digite um número de 1 a ' + C.total + '.'; return render(); }
+  if (isNaN(n) || n < PRIMEIRO || n > ultimo(C.total)) { dica = 'Digite um número de ' + pad(PRIMEIRO) + ' a ' + pad(ultimo(C.total)) + '.'; return render(); }
   faixa = faixaDe(n);
   if (status(n) !== 'livre') dica = 'O número ' + pad(n) + ' já foi ' + (status(n) === 'pago' ? 'vendido' : 'reservado') + '.';
   else if (!sel.has(n)) escolher(n);
   reservado = null; render();
-}
-
-function sorte() {
-  const livres = [];
-  for (let n = 1; n <= C.total; n++) if (status(n) === 'livre' && !sel.has(n)) livres.push(n);
-  dica = '';
-  if (!livres.length) { dica = 'Não há mais números livres.'; return render(); }
-  const r = new Uint32Array(1); crypto.getRandomValues(r);
-  const n = livres[r[0] % livres.length];
-  escolher(n); faixa = faixaDe(n); reservado = null; render();
 }
 
 function mensagem(nums) {
@@ -83,23 +110,96 @@ async function reservar() {
   const { error } = await sb.rpc('rifa_reservar', { p_numeros: nums, p_nome: nome.trim(), p_telefone: fone.trim() });
   enviando = false;
   if (error) { erro = erroMsg(error); await carregar(); return; }
-  reservado = nums; sel.clear();
+  reservado = nums; reservadoEm = new Date(); sel.clear();
   await carregar();
   document.getElementById('painel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// ---------- BLOCOS ----------
+function blocoSorteio(livres) {
+  if (C.resultado_numero != null) return null;
+  const alvo = dataHoraSorteio(C.data_sorteio);
+  if (alvo && alvo > Date.now()) {
+    return [
+      h('p', { class: 'sub' }, 'Sorteio pela Loteria Federal · ' + fmtData(C.data_sorteio) + ', 19h'),
+      h('div', { class: 'cd', id: 'cd', 'aria-live': 'off' })
+    ];
+  }
+  return h('p', { class: 'aviso-lf' },
+    'Sorteio pela Loteria Federal, na primeira extração depois que os ' + C.total + ' números forem vendidos. ' +
+    (livres > 0 ? 'Faltam ' + livres + ' números.' : 'Todos vendidos! A data será anunciada aqui.'));
+}
+
+function atualizarContagem() {
+  const el = document.getElementById('cd');
+  if (!el || !C) return;
+  const c = contagem(dataHoraSorteio(C.data_sorteio));
+  if (!c) { el.replaceChildren(h('div', null, h('b', null, 'Hoje'), h('span', null, '19h'))); return; }
+  el.replaceChildren(...[['d', 'dias'], ['h', 'horas'], ['m', 'min'], ['s', 'seg']]
+    .map(([k, l]) => h('div', null, h('b', null, String(c[k]).padStart(2, '0')), h('span', null, l))));
+}
+
+function blocoCompraRapida(fechado) {
+  if (fechado) return null;
+  return h('section', { class: 'panel' },
+    h('h2', null, 'Compra rápida'),
+    h('p', { class: 'muted' }, 'O site escolhe números livres aleatórios para você.'),
+    h('div', { class: 'quick' }, [5, 10, 20].map(q =>
+      h('button', { onclick: () => compraRapida(q) }, h('b', null, '+' + q), h('span', null, brl(q * C.preco))))));
+}
+
+function blocoCompartilhar() {
+  const texto = 'Rifa da ' + C.premio.toLowerCase() + ' por ' + brl(C.preco) + ' o número! Sorteio pela Loteria Federal. Escolha os seus: ' + SITE;
+  return h('section', { class: 'panel' },
+    h('h2', null, 'Compartilhe com os amigos'),
+    h('div', { class: 'row' },
+      h('a', { class: 'btn primary', href: 'https://wa.me/?text=' + encodeURIComponent(texto), target: '_blank', rel: 'noopener' }, 'Mandar no WhatsApp'),
+      h('button', { class: 'btn', onclick: e => copiar(SITE, e.currentTarget) }, 'Copiar link')));
+}
+
+function blocoRegulamento() {
+  const prazo = C.prazo_horas || 24;
+  return h('details', { class: 'regras', id: 'regulamento' },
+    h('summary', null, 'Regulamento'),
+    h('div', null,
+      h('h3', null, 'Prêmio'),
+      h('p', null, 'Uma ' + C.premio.toLowerCase() + ' conforme as fotos desta página' + (C.descricao ? ': ' + C.descricao : '') + '.'),
+      h('h3', null, 'Números e valor'),
+      h('p', null, 'São ' + C.total + ' números, de ' + pad(PRIMEIRO) + ' a ' + pad(ultimo(C.total)) + ', a ' + brl(C.preco) + ' cada. Cada número pertence a uma única pessoa.'),
+      h('h3', null, 'Como participar'),
+      h('ol', null,
+        h('li', null, 'Escolha seus números na grade, pela busca ou pela compra rápida (até ' + MAX_POR_RESERVA + ' por reserva).'),
+        h('li', null, 'Informe nome e WhatsApp e reserve.'),
+        h('li', null, 'Pague pelo Pix em até ' + prazo + ' horas e envie o comprovante no WhatsApp do organizador.'),
+        h('li', null, 'Reservas não pagas dentro do prazo são canceladas automaticamente e os números voltam a ficar livres.')),
+      h('h3', null, 'Sorteio'),
+      h('p', null, 'O sorteio acontece pela Loteria Federal, na primeira extração depois que todos os ' + C.total + ' números forem vendidos. A data é anunciada nesta página e no grupo de WhatsApp.'),
+      h('p', null, 'Ganha o número igual aos 3 últimos dígitos do 1º prêmio. Exemplo: se o 1º prêmio for 54.327, ganha o número 327.'),
+      h('p', null, 'O resultado pode ser conferido por qualquer pessoa no site da Caixa (loterias.caixa.gov.br).'),
+      h('h3', null, 'Entrega'),
+      h('p', null, 'O organizador entra em contato com o ganhador pelo WhatsApp informado na reserva para combinar a entrega ou retirada da mesa.')));
+}
+
 function painel() {
-  if (C.resultado_numero) return null;
+  if (C.resultado_numero != null) return null;
 
   if (reservado) {
+    const prazo = C.prazo_horas || 24;
+    const limite = new Date(reservadoEm.getTime() + prazo * 3600 * 1000);
     const link = waLink(C.whatsapp, mensagem(reservado));
+    const qr = h('img', { src: 'pix-qrcode.png', alt: 'QR Code do Pix', width: 220, height: 220 });
+    qr.addEventListener('error', () => qr.parentElement?.remove());
     return h('section', { class: 'panel', id: 'painel' },
       h('h2', null, 'Números reservados!'),
       h('div', { class: 'chips' }, reservado.map(n => h('span', { class: 'chip' }, pad(n)))),
-      h('p', { style: 'margin:0;font-weight:700' }, 'Total: ' + brl(reservado.length * C.preco)),
-      h('p', { class: 'muted' }, 'Faça o Pix e envie o comprovante no WhatsApp. Seu número fica como "pago" assim que o pagamento for confirmado.'),
-      C.pix ? h('div', { class: 'row' }, h('span', { class: 'pix' }, C.pix),
-        h('button', { class: 'btn sm', onclick: e => copiar(C.pix, e.currentTarget) }, 'Copiar chave Pix')) : null,
+      h('p', { style: 'margin:0;font-weight:700;font-size:18px' }, 'Total: ' + brl(reservado.length * C.preco)),
+      h('p', { class: 'prazo' }, 'Pague até ' + limite.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) +
+        ' (' + prazo + ' horas). Depois disso a reserva é cancelada e os números voltam a ficar livres.'),
+      h('div', { class: 'qr' }, h('p', { class: 'muted', style: 'font-weight:700' }, 'Pague com o QR Code'), qr),
+      C.pix ? h('div', { style: 'display:grid;gap:6px' },
+        h('p', { class: 'muted', style: 'font-weight:700' }, 'Ou copie a chave Pix'),
+        h('div', { class: 'row' }, h('span', { class: 'pix' }, C.pix),
+          h('button', { class: 'btn sm', onclick: e => copiar(C.pix, e.currentTarget) }, 'Copiar chave'))) : null,
       h('div', { class: 'row' },
         link ? h('a', { class: 'btn primary', href: link, target: '_blank', rel: 'noopener' }, 'Enviar comprovante no WhatsApp') : null,
         h('button', { class: 'btn', onclick: () => { reservado = null; render(); } }, 'Escolher mais números'))
@@ -108,13 +208,13 @@ function painel() {
 
   if (!sel.size) return h('section', { class: 'panel', id: 'painel' },
     h('h2', null, 'Como participar'),
-    h('p', { class: 'muted' }, '1. Escolha seus números na grade, pela busca ou no "Número da sorte".  2. Informe nome e WhatsApp e reserve.  3. Pague pelo Pix e envie o comprovante.'));
+    h('p', { class: 'muted' }, '1. Escolha seus números na grade, pela busca ou na compra rápida.  2. Informe nome e WhatsApp e reserve.  3. Pague pelo Pix em até ' + (C.prazo_horas || 24) + ' horas e envie o comprovante.'));
 
   const nums = [...sel].sort((a, b) => a - b);
   return h('section', { class: 'panel', id: 'painel' },
     h('h2', null, 'Sua escolha'),
     h('div', { class: 'chips' }, nums.map(n => h('button', { class: 'chip', style: 'border:0;cursor:pointer;font:inherit;font-weight:700;font-size:13px', title: 'Remover', onclick: () => { sel.delete(n); render(); } }, pad(n) + ' ×'))),
-    h('p', { style: 'margin:0;font-weight:700;font-variant-numeric:tabular-nums' },
+    h('p', { style: 'margin:0;font-weight:700;font-size:18px;font-variant-numeric:tabular-nums' },
       nums.length + (nums.length > 1 ? ' números · ' : ' número · ') + brl(nums.length * C.preco)),
     h('div', { class: 'two' },
       h('label', null, 'Seu nome', h('input', { id: 'nome', value: nome, autocomplete: 'name', placeholder: 'Nome e sobrenome', maxlength: 80, oninput: e => (nome = e.target.value) })),
@@ -130,10 +230,10 @@ function render() {
   const pagos = [...ocupados.values()].filter(s => s === 'pago').length;
   const res = ocupados.size - pagos;
   const livres = C.total - ocupados.size;
-  const pct = Math.round((pagos / C.total) * 100);
-  const fechado = !!C.resultado_numero;
+  const pct = Math.round((ocupados.size / C.total) * 100);
+  const fechado = C.resultado_numero != null;
 
-  const ini = faixa * POR_FAIXA + 1, fim = Math.min(ini + POR_FAIXA - 1, C.total);
+  const ini = PRIMEIRO + faixa * POR_FAIXA, fim = Math.min(ini + POR_FAIXA - 1, ultimo(C.total));
   const bolas = [];
   for (let n = ini; n <= fim; n++) {
     const st = status(n), taken = st !== 'livre';
@@ -152,7 +252,8 @@ function render() {
     vencedor = h('div', { class: 'winner' }, b,
       h('div', null, h('p', { class: 'muted' }, 'Número sorteado'),
         h('strong', null, 'Nº ' + pad(C.resultado_numero)),
-        C.resultado_em ? h('p', { class: 'muted' }, 'Sorteado em ' + new Date(C.resultado_em).toLocaleString('pt-BR')) : null));
+        C.loteria_concurso || C.loteria_premio ? h('p', { class: 'muted' },
+          'Loteria Federal' + (C.loteria_concurso ? ', concurso ' + C.loteria_concurso : '') + (C.loteria_premio ? ' · 1º prêmio ' + C.loteria_premio : '')) : null));
   }
 
   const ativo = document.activeElement?.id;
@@ -160,35 +261,42 @@ function render() {
     h('header', { class: 'felt' }, h('div', { class: 'wrap' },
       h('span', { class: 'eyebrow' }, 'Rifa · ' + C.total + ' números · ' + brl(C.preco) + ' cada'),
       h('h1', null, C.premio),
-      C.descricao ? h('p', { class: 'sub' }, C.descricao) : null,
-      h('p', { class: 'sub' }, 'Sorteio: ' + fmtData(C.data_sorteio)),
+      blocoSorteio(livres),
       h('div', { class: 'progress' },
-        h('div', { class: 'bar', role: 'progressbar', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('i', { style: 'width:' + pct + '%' })),
-        h('div', { class: 'prow' }, h('span', null, pagos + ' pagos · ' + res + ' reservados'), h('span', null, livres + ' livres'))))),
+        h('div', { class: 'bar', role: 'progressbar', 'aria-label': 'Números vendidos', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('i', { style: 'width:' + pct + '%' })),
+        h('div', { class: 'prow' }, h('span', null, pct + '% vendido · ' + pagos + ' pagos · ' + res + ' reservados'), h('span', null, livres + ' livres'))))),
     h('main', null, h('div', { class: 'wrap' },
       vencedor,
+      h('figure', { class: 'foto' },
+        h('img', { src: 'mesa.jpg', alt: 'Mesa de sinuca preta com tecido preto, tabelas vermelhas e cantoneiras de metal', width: 1200, height: 900 }),
+        C.descricao ? h('figcaption', null, C.descricao) : null),
+      blocoCompraRapida(fechado),
       fechado ? null : h('div', { class: 'tools' },
-        h('label', null, 'Buscar número', h('input', { id: 'busca', type: 'number', inputmode: 'numeric', min: 1, max: C.total, value: busca, placeholder: 'Ex.: 777',
+        h('label', null, 'Buscar número', h('input', { id: 'busca', type: 'number', inputmode: 'numeric', min: PRIMEIRO, max: ultimo(C.total), value: busca, placeholder: 'Ex.: 777',
           oninput: e => (busca = e.target.value), onkeydown: e => { if (e.key === 'Enter') irPara(); } })),
-        h('button', { class: 'btn', onclick: irPara }, 'Escolher'),
-        h('button', { class: 'btn gold', onclick: sorte }, 'Número da sorte')),
+        h('button', { class: 'btn', onclick: irPara }, 'Escolher')),
       dica ? h('p', { class: 'erro' }, dica) : null,
       barraFaixas(C.total, faixa, ocupados, i => { faixa = i; dica = ''; render(); }),
       h('div', { class: 'legend' },
-        h('span', null, h('i', { class: 'dot', style: 'background:var(--felt)' }), 'Livre'),
+        h('span', null, h('i', { class: 'dot', style: 'background:var(--muted)' }), 'Livre'),
         h('span', null, h('i', { class: 'dot', style: 'background:var(--warn)' }), 'Reservado'),
         h('span', null, h('i', { class: 'dot', style: 'background:var(--ok)' }), 'Pago')),
       h('div', { class: 'grid' }, bolas),
-      painel())),
-    h('footer', null, h('div', { class: 'wrap' }, 'Rifa entre amigos · atualiza sozinha a cada 30 segundos'))
+      painel(),
+      blocoCompartilhar(),
+      blocoRegulamento())),
+    h('footer', null, h('div', { class: 'wrap' }, 'Rifa entre amigos · a página atualiza sozinha a cada 30 segundos'))
   );
+  atualizarContagem();
   if (ativo === 'busca') document.getElementById('busca')?.focus();
 }
 
 carregar();
+setInterval(atualizarContagem, 1000);
 setInterval(() => {
   const ativo = document.activeElement && ['nome', 'fone', 'busca'].includes(document.activeElement.id);
-  if (!ativo && !enviando) carregar();
+  const regrasAbertas = document.getElementById('regulamento')?.open;
+  if (!ativo && !enviando && !regrasAbertas) carregar();
 }, 30000);
 </script>
 </body>

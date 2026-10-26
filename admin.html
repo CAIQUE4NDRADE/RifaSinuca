@@ -279,6 +279,7 @@ function render() {
         h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, 'Salvar dados')))
     ))
   );
+  { const t = document.querySelector('.tab.on'); if (t) t.parentElement.scrollLeft = t.offsetLeft - t.parentElement.offsetLeft - 40; }
   if (ativo === 'procura') { const el = document.getElementById('procura'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   if (ativo && ['busca', 'lf-conc', 'lf-premio'].includes(ativo)) document.getElementById(ativo)?.focus();
 }

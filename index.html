@@ -37,6 +37,7 @@ const MAX_POR_RESERVA = 50;
 const SITE = 'https://caique4ndrade.github.io/RifaSinuca/';
 const app = document.getElementById('app');
 let C = null, ocupados = new Map(), sel = new Set(), faixa = 0;
+let regrasAbertas = false;
 let nome = '', fone = '', busca = '', erro = '', dica = '', reservado = null, reservadoEm = null, enviando = false;
 
 async function carregar() {
@@ -159,7 +160,7 @@ function blocoCompartilhar() {
 
 function blocoRegulamento() {
   const prazo = C.prazo_horas || 24;
-  return h('details', { class: 'regras', id: 'regulamento' },
+  return h('details', { class: 'regras', id: 'regulamento', open: regrasAbertas, ontoggle: e => (regrasAbertas = e.target.open) },
     h('summary', null, 'Regulamento'),
     h('div', null,
       h('h3', null, 'Prêmio'),
@@ -288,6 +289,7 @@ function render() {
     h('footer', null, h('div', { class: 'wrap' }, 'Rifa entre amigos · a página atualiza sozinha a cada 30 segundos'))
   );
   atualizarContagem();
+  { const t = document.querySelector('.tab.on'); if (t) t.parentElement.scrollLeft = t.offsetLeft - t.parentElement.offsetLeft - 40; }
   if (ativo === 'busca') document.getElementById('busca')?.focus();
 }
 
@@ -295,8 +297,7 @@ carregar();
 setInterval(atualizarContagem, 1000);
 setInterval(() => {
   const ativo = document.activeElement && ['nome', 'fone', 'busca'].includes(document.activeElement.id);
-  const regrasAbertas = document.getElementById('regulamento')?.open;
-  if (!ativo && !enviando && !regrasAbertas) carregar();
+  if (!ativo && !enviando) carregar();
 }, 30000);
 </script>
 </body>

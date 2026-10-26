@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Rifa · Organizador</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=Figtree:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<div id="app"><p class="loading">Carregando…</p></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script>
+const app = document.getElementById('app');
+let C = null, ocupados = new Map(), editando = null, faixa = 0, busca = '', filtro = 'reservado', procura = '';
+let aviso = '', avisoErro = false;
+
+function setAviso(t, err) { aviso = t; avisoErro = !!err; render(); if (!err) setTimeout(() => { if (aviso === t) { aviso = ''; render(); } }, 3000); }
+const linha = n => ocupados.get(n) || { numero: n, status: 'livre', nome: '', telefone: '' };
+
+// ---------- LOGIN ----------
+function telaLogin(msg) {
+  let email = '', senha = '';
+  app.replaceChildren(
+    h('header', { class: 'felt' }, h('div', { class: 'wrap' }, h('span', { class: 'eyebrow' }, 'Área do organizador'), h('h1', null, 'Entrar'))),
+    h('main', null, h('div', { class: 'wrap' },
+      h('form', { class: 'panel', onsubmit: async e => {
+          e.preventDefault();
+          const b = e.target.querySelector('button'); b.disabled = true; b.textContent = 'Entrando…';
+          const { error } = await sb.auth.signInWithPassword({ email, password: senha });
+          if (error) return telaLogin('E-mail ou senha incorretos.');
+          iniciar();
+        } },
+        h('label', null, 'E-mail', h('input', { id: 'email', type: 'email', autocomplete: 'username', required: true, oninput: e => (email = e.target.value) })),
+        h('label', null, 'Senha', h('input', { id: 'senha', type: 'password', autocomplete: 'current-password', required: true, oninput: e => (senha = e.target.value) })),
+        msg ? h('p', { class: 'erro' }, msg) : null,
+        h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, 'Entrar'))))));
+}
+
+// ---------- DADOS ----------
+async function carregar() {
+  const [c, n] = await Promise.all([
+    sb.from('rifa_config').select('*').eq('id', 1).single(),
+    sb.from('rifa_numeros').select('*').neq('status', 'livre').order('numero').range(0, 4999)
+  ]);
+  if (c.error || n.error) return setAviso(erroMsg(c.error || n.error), true);
+  C = c.data; ocupados = new Map(n.data.map(x => [x.numero, x])); render();
+}
+
+async function iniciar() {
+  const { data } = await sb.auth.getSession();
+  if (!data.session) return telaLogin();
+  const adm = await sb.rpc('rifa_is_admin');
+  if (!adm.data) {
+    await sb.auth.signOut();
+    return telaLogin('Este e-mail não está cadastrado como organizador (tabela rifa_admins).');
+  }
+  carregar();
+}
+
+async function salvarNumeros(numeros, status, nome, telefone) {
+  const dados = status === 'livre'
+    ? { status, nome: null, telefone: null, atualizado_em: new Date().toISOString() }
+    : { status, nome: (nome || '').trim() || null, telefone: (telefone || '').trim() || null, atualizado_em: new Date().toISOString() };
+  const { error } = await sb.from('rifa_numeros').update(dados).in('numero', numeros);
+  if (error) return setAviso(erroMsg(error), true);
+  editando = null; await carregar();
+  setAviso((numeros.length > 1 ? numeros.length + ' números salvos' : 'Número ' + pad(numeros[0]) + ' salvo') + ' como ' + status + '.');
+}
+
+async function salvarConfig(form) {
+  const f = Object.fromEntries(new FormData(form));
+  const { error } = await sb.from('rifa_config').update({
+    premio: f.premio.trim() || 'Mesa de sinuca', descricao: f.descricao.trim(),
+    data_sorteio: f.data_sorteio || null, whatsapp: f.whatsapp.trim(), pix: f.pix.trim()
+  }).eq('id', 1);
+  if (error) return setAviso(erroMsg(error), true);
+  await carregar(); setAviso('Dados da rifa salvos.');
+}
+
+async function sortear() {
+  const pagos = [...ocupados.values()].filter(x => x.status === 'pago').map(x => x.numero);
+  if (!pagos.length) return;
+  const r = new Uint32Array(1); crypto.getRandomValues(r);
+  const n = pagos[r[0] % pagos.length];
+  const { error } = await sb.from('rifa_config').update({ resultado_numero: n, resultado_em: new Date().toISOString() }).eq('id', 1);
+  if (error) return setAviso(erroMsg(error), true);
+  await carregar();
+}
+
+async function desfazerSorteio(btn) {
+  if (btn.dataset.confirma !== '1') { btn.dataset.confirma = '1'; btn.textContent = 'Toque de novo para confirmar'; return; }
+  const { error } = await sb.from('rifa_config').update({ resultado_numero: null, resultado_em: null }).eq('id', 1);
+  if (error) return setAviso(erroMsg(error), true);
+  await carregar();
+}
+
+function abrir(n) {
+  editando = n; faixa = Math.floor((n - 1) / POR_FAIXA); render();
+  document.getElementById('editar')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ---------- TELA ----------
+function painelNumero() {
+  if (!editando) return null;
+  const it = linha(editando);
+  let nome = it.nome || '', tel = it.telefone || '';
+  const zap = waLink(it.telefone, 'Olá, ' + ((it.nome || '').split(' ')[0]) + '! Sobre o número ' + pad(editando) + ' da rifa da ' + C.premio.toLowerCase() + ':');
+  return h('section', { class: 'panel', id: 'editar' },
+    h('h2', null, 'Número ' + pad(editando) + ' · ' + it.status),
+    h('div', { class: 'two' },
+      h('label', null, 'Comprador', h('input', { id: 'ed-nome', value: nome, oninput: e => (nome = e.target.value) })),
+      h('label', null, 'WhatsApp', h('input', { id: 'ed-tel', type: 'tel', value: tel, oninput: e => (tel = e.target.value) }))),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn primary', onclick: () => salvarNumeros([editando], 'pago', nome, tel) }, 'Marcar como pago'),
+      h('button', { class: 'btn', onclick: () => salvarNumeros([editando], 'reservado', nome, tel) }, 'Reservado'),
+      h('button', { class: 'btn', onclick: () => salvarNumeros([editando], 'livre') }, 'Liberar número'),
+      zap ? h('a', { class: 'btn', href: zap, target: '_blank', rel: 'noopener' }, 'Chamar no WhatsApp') : null,
+      h('button', { class: 'btn', onclick: () => { editando = null; render(); } }, 'Fechar')));
+}
+
+// Agrupa por pessoa (nome + telefone), que é como o pagamento chega
+function compradores() {
+  const grupos = new Map();
+  ocupados.forEach(x => {
+    if (filtro !== 'todos' && x.status !== filtro) return;
+    const chave = (x.nome || '').toLowerCase() + '|' + (x.telefone || '').replace(/\D/g, '');
+    if (!grupos.has(chave)) grupos.set(chave, { nome: x.nome, telefone: x.telefone, nums: [], status: new Set() });
+    const g = grupos.get(chave); g.nums.push(x.numero); g.status.add(x.status);
+  });
+  let lista = [...grupos.values()];
+  const q = procura.trim().toLowerCase();
+  if (q) lista = lista.filter(g => (g.nome || '').toLowerCase().includes(q) || (g.telefone || '').includes(q) || g.nums.some(n => pad(n).includes(q)));
+  return lista.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+}
+
+function render() {
+  const todos = [...ocupados.values()];
+  const pagos = todos.filter(x => x.status === 'pago');
+  const res = todos.filter(x => x.status === 'reservado');
+
+  const ini = faixa * POR_FAIXA + 1, fim = Math.min(ini + POR_FAIXA - 1, C.total);
+  const bolas = [];
+  for (let n = ini; n <= fim; n++) {
+    const st = linha(n).status;
+    bolas.push(bola(n, st, (st !== 'livre' ? 'taken adm' : '') + (editando === n ? ' sel' : ''), () => editando === n ? (editando = null, render()) : abrir(n)));
+  }
+
+  const lista = compradores();
+  const ativo = document.activeElement?.id;
+
+  app.replaceChildren(
+    h('header', { class: 'felt' }, h('div', { class: 'wrap' },
+      h('span', { class: 'eyebrow' }, 'Área do organizador'),
+      h('h1', null, C.premio),
+      h('div', { class: 'row' },
+        h('a', { class: 'btn sm', href: './', target: '_blank', rel: 'noopener' }, 'Ver página pública'),
+        h('button', { class: 'btn sm', onclick: carregar }, 'Atualizar'),
+        h('button', { class: 'btn sm', onclick: async () => { await sb.auth.signOut(); telaLogin(); } }, 'Sair')))),
+    h('main', null, h('div', { class: 'wrap' },
+      aviso ? h('p', { class: avisoErro ? 'erro' : 'ok' }, aviso) : null,
+
+      h('div', { class: 'stats' },
+        h('div', { class: 'stat' }, h('b', null, brl(pagos.length * C.preco)), h('span', null, 'Recebido')),
+        h('div', { class: 'stat' }, h('b', null, brl(res.length * C.preco)), h('span', null, 'A receber')),
+        h('div', { class: 'stat' }, h('b', null, pagos.length + ' / ' + C.total), h('span', null, 'Pagos')),
+        h('div', { class: 'stat' }, h('b', null, C.total - todos.length), h('span', null, 'Livres'))),
+
+      h('section', { class: 'panel' },
+        h('div', { class: 'row', style: 'justify-content:space-between' },
+          h('h2', null, 'Compradores'),
+          h('div', { class: 'row' }, ['reservado', 'pago', 'todos'].map(f =>
+            h('button', { class: 'btn sm' + (filtro === f ? ' on' : ''), onclick: () => { filtro = f; render(); } }, f[0].toUpperCase() + f.slice(1))))),
+        h('input', { id: 'procura', value: procura, placeholder: 'Procurar por nome, telefone ou número', oninput: e => { procura = e.target.value; render(); } }),
+        lista.length ? h('div', { class: 'tw' }, h('table', null,
+          h('thead', null, h('tr', null, h('th', null, 'Nome'), h('th', null, 'WhatsApp'), h('th', null, 'Números'), h('th', null, 'Valor'), h('th', null, ''))),
+          h('tbody', null, lista.map(g => {
+            const pend = g.nums.filter(n => linha(n).status === 'reservado');
+            return h('tr', null,
+              h('td', null, g.nome || '—'),
+              h('td', null, g.telefone || '—'),
+              h('td', null, h('div', { class: 'chips' }, g.nums.sort((a, b) => a - b).map(n =>
+                h('button', { class: 'chip', style: 'border:0;cursor:pointer;font:inherit;font-weight:700;font-size:12px;' + (linha(n).status === 'reservado' ? 'background:var(--warn)' : ''), onclick: () => abrir(n) }, pad(n))))),
+              h('td', null, brl(g.nums.length * C.preco)),
+              h('td', null, pend.length ? h('button', { class: 'btn sm primary', onclick: () => salvarNumeros(pend, 'pago', g.nome, g.telefone) }, 'Pagou tudo (' + brl(pend.length * C.preco) + ')') : null));
+          }))))
+          : h('p', { class: 'muted' }, procura ? 'Ninguém encontrado.' : 'Nenhum número ' + (filtro === 'todos' ? 'vendido' : filtro) + ' ainda.')),
+
+      h('section', { class: 'panel' },
+        h('h2', null, 'Números'),
+        h('div', { class: 'tools' },
+          h('label', null, 'Ir para o número', h('input', { id: 'busca', type: 'number', inputmode: 'numeric', min: 1, max: C.total, value: busca,
+            oninput: e => (busca = e.target.value), onkeydown: e => { if (e.key === 'Enter') { const n = parseInt(busca, 10); if (n >= 1 && n <= C.total) abrir(n); } } })),
+          h('button', { class: 'btn', onclick: () => { const n = parseInt(busca, 10); if (n >= 1 && n <= C.total) abrir(n); } }, 'Abrir')),
+        barraFaixas(C.total, faixa, ocupados, i => { faixa = i; render(); }),
+        h('div', { class: 'grid' }, bolas)),
+      painelNumero(),
+
+      h('form', { class: 'panel', onsubmit: e => { e.preventDefault(); salvarConfig(e.target); } },
+        h('h2', null, 'Dados da rifa'),
+        h('div', { class: 'two' },
+          h('label', null, 'Prêmio', h('input', { id: 'cfg-premio', name: 'premio', value: C.premio || '' })),
+          h('label', null, 'Data do sorteio', h('input', { id: 'cfg-data', name: 'data_sorteio', type: 'date', value: C.data_sorteio || '' }))),
+        h('label', null, 'Descrição', h('input', { id: 'cfg-desc', name: 'descricao', value: C.descricao || '', placeholder: 'Ex.: mesa 2,20 m com tacos, bolas e giz' })),
+        h('div', { class: 'two' },
+          h('label', null, 'Seu WhatsApp (com DDD)', h('input', { id: 'cfg-wa', name: 'whatsapp', type: 'tel', value: C.whatsapp || '', placeholder: '(19) 99999-9999' })),
+          h('label', null, 'Chave Pix', h('input', { id: 'cfg-pix', name: 'pix', value: C.pix || '', placeholder: 'CPF, e-mail, telefone ou aleatória' }))),
+        h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'submit' }, 'Salvar dados'))),
+
+      h('section', { class: 'panel' },
+        h('h2', null, 'Sorteio'),
+        C.resultado_numero
+          ? [h('p', { style: 'margin:0;font-weight:700' }, 'Sorteado: nº ' + pad(C.resultado_numero) + ' · ' + (linha(C.resultado_numero).nome || '') + ' ' + (linha(C.resultado_numero).telefone || '')),
+             h('div', { class: 'row' }, h('button', { class: 'btn', onclick: e => desfazerSorteio(e.currentTarget) }, 'Desfazer sorteio'))]
+          : [h('p', { class: 'muted' }, 'Sorteia um número entre os ' + pagos.length + ' pagos e mostra o resultado na página pública. Números só reservados não entram.'),
+             h('div', { class: 'row' }, h('button', { class: 'btn gold', disabled: !pagos.length, onclick: sortear }, 'Sortear agora'))])
+    ))
+  );
+  if (ativo === 'procura') { const el = document.getElementById('procura'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  if (ativo === 'busca') document.getElementById('busca')?.focus();
+}
+
+iniciar();
+</script>
+</body>
+</html>

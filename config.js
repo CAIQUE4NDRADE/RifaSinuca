@@ -89,3 +89,38 @@ function contagem(alvo) {
   const s = Math.floor(ms / 1000);
   return { d: Math.floor(s / 86400), h: Math.floor(s % 86400 / 3600), m: Math.floor(s % 3600 / 60), s: s % 60 };
 }
+
+// ---------- PIX (BR Code / copia e cola, padrão do Banco Central) ----------
+const PIX_NOME = 'CAIQUE';        // nome do recebedor (até 25 letras, sem acento)
+const PIX_CIDADE = 'HORTOLANDIA'; // cidade do recebedor (até 15 letras, sem acento)
+
+function pixPayload({ chave, valor, txid }) {
+  const limpa = (s, max) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9 ]/g, '').toUpperCase().slice(0, max);
+  const f = (id, v) => id + String(v.length).padStart(2, '0') + v;
+  const conta = f('00', 'br.gov.bcb.pix') + f('01', chave.trim());
+  const id = (txid ? limpa(txid, 25).replace(/ /g, '') : '') || '***';
+  let p = f('00', '01') + f('26', conta) + f('52', '0000') + f('53', '986') +
+    (valor ? f('54', Number(valor).toFixed(2)) : '') +
+    f('58', 'BR') + f('59', limpa(PIX_NOME, 25)) + f('60', limpa(PIX_CIDADE, 15)) +
+    f('62', f('05', id)) + '6304';
+  return p + crc16(p);
+}
+
+function crc16(s) {
+  let crc = 0xFFFF;
+  for (const ch of new TextEncoder().encode(s)) {
+    crc ^= ch << 8;
+    for (let i = 0; i < 8; i++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF;
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+
+function qrSvg(texto) {
+  if (typeof qrcode !== 'function') return null;
+  const q = qrcode(0, 'M'); q.addData(texto); q.make();
+  const box = document.createElement('div');
+  box.className = 'qr-img';
+  box.innerHTML = q.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+  box.setAttribute('role', 'img'); box.setAttribute('aria-label', 'QR Code do Pix');
+  return box;
+}

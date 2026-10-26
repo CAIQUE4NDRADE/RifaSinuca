@@ -158,13 +158,14 @@ function blocoRanking() {
   const medalhas = ['#d4a72c', '#a7adb4', '#b8733d'];
   return h('section', { class: 'panel' },
     h('h2', null, 'Maiores compradores'),
+    h('p', { class: 'premio-rank' }, 'Quem mais comprar ganha ', h('strong', null, 'R$ 50 no Pix'), '!'),
     h('ol', { class: 'rank' }, ranking.map((p, i) =>
       h('li', null,
         h('span', { class: 'rank-pos', style: i < 3 ? 'background:' + medalhas[i] + ';color:#17191d' : '' }, i + 1),
         h('span', { class: 'rank-ini', 'aria-hidden': 'true' }, (p.nome || '?')[0]),
         h('span', { class: 'rank-nome' }, p.nome),
         h('span', { class: 'rank-qtd' }, p.qtd + (p.qtd > 1 ? ' números' : ' número'))))),
-    h('p', { class: 'muted' }, 'Conta só números pagos.'));
+    h('p', { class: 'muted' }, 'Conta só números pagos. Veja as regras no regulamento.'));
 }
 
 function blocoCompartilhar() {
@@ -187,6 +188,8 @@ function blocoRegulamento() {
         h('li', null, 'uma ' + C.premio.toLowerCase() + ' conforme as fotos desta página' + (C.descricao ? ' (' + C.descricao + ')' : '') + '; ou'),
         h('li', null, 'R$ 2.000,00 (dois mil reais) em dinheiro, pagos via Pix na conta do ganhador.')),
       h('p', null, 'A escolha é informada ao organizador pelo WhatsApp em até 7 dias depois do resultado.'),
+      h('h3', null, 'Quem pode participar'),
+      h('p', null, 'Maiores de 18 anos. Ao reservar e pagar, o participante concorda com este regulamento.'),
       h('h3', null, 'Números e valor'),
       h('p', null, 'São ' + C.total + ' números, de ' + pad(PRIMEIRO) + ' a ' + pad(ultimo(C.total)) + ', a ' + brl(C.preco) + ' cada. Cada número pertence a uma única pessoa.'),
       h('h3', null, 'Como participar'),
@@ -199,8 +202,15 @@ function blocoRegulamento() {
       h('p', null, 'O sorteio acontece pela Loteria Federal, na primeira extração depois que todos os ' + C.total + ' números forem vendidos. A data é anunciada nesta página e no grupo de WhatsApp.'),
       h('p', null, 'Ganha o número igual aos 3 últimos dígitos do 1º prêmio. Exemplo: se o 1º prêmio for 54.327, ganha o número 327.'),
       h('p', null, 'O resultado pode ser conferido por qualquer pessoa no site da Caixa (loterias.caixa.gov.br).'),
+      h('h3', null, 'Prêmio para o maior comprador'),
+      h('p', null, 'Quem tiver mais números pagos quando a rifa fechar ganha R$ 50,00 via Pix, além de concorrer normalmente ao prêmio principal. Os números são somados pelo WhatsApp informado na reserva. Em caso de empate, os R$ 50,00 são divididos igualmente entre os empatados.'),
       h('h3', null, 'Entrega'),
-      h('p', null, 'O organizador entra em contato com o ganhador pelo WhatsApp informado na reserva para combinar a entrega ou retirada da mesa.')));
+      h('p', null, 'O organizador entra em contato com o ganhador pelo WhatsApp informado na reserva.'),
+      h('ul', null,
+        h('li', null, 'Se o ganhador escolher a mesa, a retirada e o transporte são por conta do ganhador, no local e horário combinados com o organizador.'),
+        h('li', null, 'Se escolher o dinheiro, os R$ 2.000,00 são pagos via Pix na conta do ganhador.')),
+      h('h3', null, 'Uso de imagem'),
+      h('p', null, 'O ganhador concorda em aparecer em foto ou vídeo recebendo o prêmio, para mostrar a todos os participantes que o sorteio foi feito.')));
 }
 
 function painel() {

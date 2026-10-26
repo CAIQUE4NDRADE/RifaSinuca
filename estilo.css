@@ -111,6 +111,8 @@ footer{font-size:12px;color:var(--muted);text-align:center;padding-bottom:24px}
 .qr-img svg{display:block;width:100%;height:auto}
 .prazo{background:var(--bg);border-radius:10px;padding:10px 12px;font-size:14px;margin:0}
 .msg-prev{margin:0;white-space:pre-wrap;background:var(--bg);border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.45}
+.premio-rank{margin:0;font-size:16px;font-weight:600}
+.premio-rank strong{background:var(--rail);color:#fff;padding:1px 8px;border-radius:6px}
 .rank{list-style:none;margin:0;padding:0;display:grid;gap:8px}
 .rank li{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
 .rank li:last-child{border-bottom:0}
